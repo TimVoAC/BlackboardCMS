@@ -1,0 +1,266 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  REGISTRAR
+  INSTRUCTOR
+  STUDENT
+  ADVISOR
+}
+
+enum EnrollmentStatus {
+  PLANNED
+  ENROLLED
+  WAITLISTED
+  DROPPED
+  COMPLETED
+}
+
+enum SectionModality {
+  IN_PERSON
+  ONLINE
+  HYBRID
+}
+
+enum SubmissionStatus {
+  NOT_STARTED
+  SUBMITTED
+  LATE
+  GRADED
+}
+
+model User {
+  id                  String               @id @default(cuid())
+  email               String               @unique
+  firstName           String
+  lastName            String
+  role                UserRole
+  studentProfile      StudentProfile?
+  instructorProfile   InstructorProfile?
+  advisorAssignments  AdvisingAssignment[] @relation("AdvisorAssignments")
+  adviseeAssignments  AdvisingAssignment[] @relation("AdviseeAssignments")
+  enrollments         Enrollment[]
+  submissions         Submission[]
+  announcements       Announcement[]
+  discussionPosts     DiscussionPost[]
+  auditLogs           AuditLog[]
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+}
+
+model StudentProfile {
+  id              String    @id @default(cuid())
+  userId          String    @unique
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  studentNumber   String    @unique
+  programId       String
+  program         Program   @relation(fields: [programId], references: [id])
+  catalogYear     Int
+  expectedGradTerm String?
+  holds           Hold[]
+}
+
+model InstructorProfile {
+  id           String     @id @default(cuid())
+  userId       String     @unique
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  employeeCode String     @unique
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id])
+  sections     Section[]
+}
+
+model AdvisingAssignment {
+  id        String   @id @default(cuid())
+  advisorId String
+  advisor   User     @relation("AdvisorAssignments", fields: [advisorId], references: [id])
+  studentId String
+  student   User     @relation("AdviseeAssignments", fields: [studentId], references: [id])
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@unique([advisorId, studentId])
+}
+
+model Department {
+  id          String              @id @default(cuid())
+  code        String              @unique
+  name        String
+  programs    Program[]
+  courses     Course[]
+  instructors InstructorProfile[]
+}
+
+model Program {
+  id          String           @id @default(cuid())
+  code        String           @unique
+  name        String
+  degreeType  String
+  departmentId String
+  department  Department       @relation(fields: [departmentId], references: [id])
+  students    StudentProfile[]
+}
+
+model Term {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  startsOn    DateTime
+  endsOn      DateTime
+  sections    Section[]
+}
+
+model Course {
+  id             String       @id @default(cuid())
+  code           String       @unique
+  title          String
+  description    String
+  credits        Int
+  departmentId   String
+  department     Department   @relation(fields: [departmentId], references: [id])
+  prerequisites  Course[]     @relation("CoursePrerequisites")
+  requiredFor    Course[]     @relation("CoursePrerequisites")
+  sections       Section[]
+}
+
+model Section {
+  id              String          @id @default(cuid())
+  sectionNumber   String
+  courseId        String
+  course          Course          @relation(fields: [courseId], references: [id])
+  termId          String
+  term            Term            @relation(fields: [termId], references: [id])
+  instructorId    String
+  instructor      InstructorProfile @relation(fields: [instructorId], references: [id])
+  capacity        Int
+  modality        SectionModality
+  meetingPattern  String
+  room            String?
+  enrollments     Enrollment[]
+  assignments     Assignment[]
+  announcements   Announcement[]
+  topics          DiscussionTopic[]
+  attendances     Attendance[]
+
+  @@unique([courseId, termId, sectionNumber])
+}
+
+model Enrollment {
+  id         String           @id @default(cuid())
+  studentId  String
+  student    User             @relation(fields: [studentId], references: [id])
+  sectionId  String
+  section    Section          @relation(fields: [sectionId], references: [id])
+  status     EnrollmentStatus @default(PLANNED)
+  finalGrade String?
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  @@unique([studentId, sectionId])
+}
+
+model Assignment {
+  id          String       @id @default(cuid())
+  sectionId   String
+  section     Section      @relation(fields: [sectionId], references: [id])
+  title       String
+  description String
+  dueAt       DateTime
+  points      Decimal      @db.Decimal(6, 2)
+  submissions Submission[]
+  gradeItems  GradeItem[]
+}
+
+model Submission {
+  id           String           @id @default(cuid())
+  assignmentId String
+  assignment   Assignment       @relation(fields: [assignmentId], references: [id])
+  studentId    String
+  student      User             @relation(fields: [studentId], references: [id])
+  contentUrl   String?
+  status       SubmissionStatus @default(NOT_STARTED)
+  submittedAt  DateTime?
+  feedback     String?
+  gradeItem    GradeItem?
+
+  @@unique([assignmentId, studentId])
+}
+
+model GradeItem {
+  id           String     @id @default(cuid())
+  assignmentId String
+  assignment   Assignment @relation(fields: [assignmentId], references: [id])
+  submissionId String?    @unique
+  submission   Submission? @relation(fields: [submissionId], references: [id])
+  studentId    String
+  score        Decimal    @db.Decimal(6, 2)
+  gradedAt     DateTime   @default(now())
+}
+
+model Attendance {
+  id        String   @id @default(cuid())
+  sectionId String
+  section   Section  @relation(fields: [sectionId], references: [id])
+  studentId String
+  metOn     DateTime
+  present   Boolean
+  note      String?
+
+  @@unique([sectionId, studentId, metOn])
+}
+
+model Announcement {
+  id        String   @id @default(cuid())
+  sectionId String?
+  section   Section? @relation(fields: [sectionId], references: [id])
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id])
+  title     String
+  body      String
+  createdAt DateTime @default(now())
+}
+
+model DiscussionTopic {
+  id        String           @id @default(cuid())
+  sectionId String
+  section   Section          @relation(fields: [sectionId], references: [id])
+  title     String
+  posts     DiscussionPost[]
+  createdAt DateTime         @default(now())
+}
+
+model DiscussionPost {
+  id        String          @id @default(cuid())
+  topicId   String
+  topic     DiscussionTopic @relation(fields: [topicId], references: [id])
+  authorId  String
+  author    User            @relation(fields: [authorId], references: [id])
+  body      String
+  createdAt DateTime        @default(now())
+}
+
+model Hold {
+  id               String         @id @default(cuid())
+  studentProfileId String
+  studentProfile   StudentProfile @relation(fields: [studentProfileId], references: [id])
+  reason           String
+  blocksRegistration Boolean       @default(true)
+  resolvedAt       DateTime?
+  createdAt        DateTime       @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String
+  actor     User     @relation(fields: [actorId], references: [id])
+  action    String
+  entity    String
+  entityId  String
+  createdAt DateTime @default(now())
+}
