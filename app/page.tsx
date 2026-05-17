@@ -2,9 +2,9 @@
 
 import {
   BookOpenCheck,
-  CalendarDays,
   CheckCircle2,
   ClipboardList,
+  FileText,
   GraduationCap,
   LayoutDashboard,
   LibraryBig,
@@ -15,117 +15,111 @@ import {
   RotateCcw,
   Save,
   Search,
-  Send,
   Settings,
   ShieldCheck,
-  Trash2,
+  UserPlus,
   UsersRound,
   X
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { CampusState, Course, initialCampusState } from "@/lib/demo-data";
+import {
+  Assignment,
+  CampusState,
+  Course,
+  CourseWeek,
+  EnrollmentRequest,
+  initialCampusState,
+  Person,
+  UserRole
+} from "@/lib/demo-data";
 
-const storageKey = "campusboard-state-v1";
+const storageKey = "campusboard-state-v3";
+const sessionKey = "campusboard-session-v3";
 
 const navItems = [
   { label: "Dashboard", icon: LayoutDashboard },
-  { label: "Registration", icon: ClipboardList },
   { label: "Courses", icon: LibraryBig },
-  { label: "Teaching", icon: BookOpenCheck },
-  { label: "Learning", icon: GraduationCap },
+  { label: "Enrollment", icon: ClipboardList },
+  { label: "Course Content", icon: BookOpenCheck },
+  { label: "Grades", icon: GraduationCap },
   { label: "Messages", icon: MessageSquareText },
   { label: "Settings", icon: Settings }
 ] as const;
 
-const roles = ["Registrar", "Instructor", "Student", "Advisor"] as const;
-const termOptions = ["Fall 2026", "Spring 2027", "Summer 2027"];
-const sessionKey = "campusboard-session-v1";
-
 type ActiveView = (typeof navItems)[number]["label"];
-type Role = (typeof roles)[number];
-type Toast = { message: string; tone: "success" | "warning" };
 type Permission =
-  | "createSection"
-  | "addCourseToPlan"
-  | "approvePlan"
-  | "enroll"
-  | "completeTeachingTask"
-  | "publishAnnouncement"
-  | "editGrades"
-  | "resolveApprovals"
-  | "sendMessages"
+  | "manageCourses"
+  | "manageRoster"
+  | "approveEnrollment"
+  | "manageContent"
+  | "gradeSubmissions"
+  | "requestEnrollment"
+  | "submitAssignments"
+  | "viewGrades"
   | "manageSettings";
-type DemoUser = {
-  id: string;
-  name: string;
-  email: string;
-  password: string;
-  role: Role;
-};
+type Toast = { message: string; tone: "success" | "warning" };
+type DemoUser = Person & { password: string };
 
 const demoUsers: DemoUser[] = [
-  { id: "registrar", name: "Robin Carter", email: "registrar@northvalley.edu", password: "registrar123", role: "Registrar" },
-  { id: "instructor", name: "Marcus Chen", email: "instructor@northvalley.edu", password: "instructor123", role: "Instructor" },
-  { id: "student", name: "Maya Stone", email: "student@northvalley.edu", password: "student123", role: "Student" },
-  { id: "advisor", name: "Avery Patel", email: "advisor@northvalley.edu", password: "advisor123", role: "Advisor" }
+  { ...initialCampusState.people[0], password: "admin123" },
+  { ...initialCampusState.people[1], password: "advisor123" },
+  { ...initialCampusState.people[2], password: "faculty123" },
+  { ...initialCampusState.people[4], password: "student123" }
 ];
 
-const roleAccess: Record<Role, { views: ActiveView[]; permissions: Permission[] }> = {
-  Registrar: {
-    views: ["Dashboard", "Registration", "Courses", "Messages", "Settings"],
-    permissions: ["createSection", "approvePlan", "resolveApprovals", "sendMessages", "manageSettings"]
-  },
-  Instructor: {
-    views: ["Dashboard", "Teaching", "Learning", "Messages", "Settings"],
-    permissions: ["completeTeachingTask", "publishAnnouncement", "editGrades", "sendMessages"]
-  },
-  Student: {
-    views: ["Dashboard", "Registration", "Courses", "Learning", "Messages", "Settings"],
-    permissions: ["addCourseToPlan", "enroll"]
+const roleAccess: Record<UserRole, { views: ActiveView[]; permissions: Permission[] }> = {
+  Administrator: {
+    views: ["Dashboard", "Courses", "Enrollment", "Messages", "Settings"],
+    permissions: ["manageCourses", "manageRoster", "manageSettings"]
   },
   Advisor: {
-    views: ["Dashboard", "Registration", "Courses", "Learning", "Messages", "Settings"],
-    permissions: ["addCourseToPlan", "approvePlan", "sendMessages"]
+    views: ["Dashboard", "Courses", "Enrollment", "Messages", "Settings"],
+    permissions: ["approveEnrollment"]
+  },
+  Faculty: {
+    views: ["Dashboard", "Courses", "Course Content", "Grades", "Messages", "Settings"],
+    permissions: ["manageContent", "gradeSubmissions", "viewGrades"]
+  },
+  Student: {
+    views: ["Dashboard", "Courses", "Enrollment", "Course Content", "Grades", "Messages", "Settings"],
+    permissions: ["requestEnrollment", "submitAssignments", "viewGrades"]
   }
 };
 
 const blankCourse = {
   code: "",
   title: "",
-  instructor: "",
   department: "",
-  capacity: 30,
   credits: 3,
+  capacity: 30,
   schedule: "",
-  room: "",
-  status: "Open" as Course["status"]
+  room: ""
 };
 
 export default function Home() {
   const [campus, setCampus] = useState<CampusState>(initialCampusState);
   const [currentUser, setCurrentUser] = useState<DemoUser | null>(null);
-  const [loginForm, setLoginForm] = useState({ email: "registrar@northvalley.edu", password: "registrar123" });
+  const [loginForm, setLoginForm] = useState({ email: "admin@northvalley.edu", password: "admin123" });
   const [activeView, setActiveView] = useState<ActiveView>("Dashboard");
+  const [selectedCourseId, setSelectedCourseId] = useState(initialCampusState.courses[0].id);
   const [query, setQuery] = useState("");
-  const [selectedTerm, setSelectedTerm] = useState("Fall 2026");
-  const [sectionFormOpen, setSectionFormOpen] = useState(false);
+  const [courseFormOpen, setCourseFormOpen] = useState(false);
   const [newCourse, setNewCourse] = useState(blankCourse);
-  const [announcementText, setAnnouncementText] = useState("");
-  const [messageDraft, setMessageDraft] = useState({ to: "All students", subject: "", body: "" });
+  const [newWeekTitle, setNewWeekTitle] = useState("");
+  const [newAssignment, setNewAssignment] = useState({ weekId: "", title: "", prompt: "", due: "" });
+  const [submissionText, setSubmissionText] = useState("");
   const [toast, setToast] = useState<Toast | null>(null);
 
   useEffect(() => {
     const saved = window.localStorage.getItem(storageKey);
     if (saved) {
-      setCampus(JSON.parse(saved) as CampusState);
+      const parsed = JSON.parse(saved) as CampusState;
+      setCampus(parsed);
+      setSelectedCourseId(parsed.courses[0]?.id ?? "");
     }
-    const savedSession = window.localStorage.getItem(sessionKey);
-    if (savedSession) {
-      const user = demoUsers.find((account) => account.id === savedSession);
-      if (user) {
-        setCurrentUser(user);
-      }
-    }
+    const session = window.localStorage.getItem(sessionKey);
+    const user = demoUsers.find((account) => account.id === session);
+    if (user) setCurrentUser(user);
   }, []);
 
   useEffect(() => {
@@ -138,72 +132,48 @@ export default function Home() {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  const stats = useMemo(() => {
-    const enrolled = campus.courses.reduce((sum, course) => sum + course.enrolled, 0);
-    const capacity = campus.courses.reduce((sum, course) => sum + course.capacity, 0);
-    const pending = campus.approvals.reduce((sum, item) => sum + item.count, 0);
-    const openSections = campus.courses.filter((course) => course.status === "Open").length;
-
-    return [
-      { label: "Active students", value: "8,426", detail: `${enrolled}/${capacity} seats filled in tracked sections` },
-      { label: "Open sections", value: String(openSections), detail: `${campus.courses.length} total sections` },
-      { label: "Faculty", value: "318", detail: "24 departments" },
-      { label: "Pending actions", value: String(pending), detail: "Advising, holds, overrides" }
-    ];
-  }, [campus.approvals, campus.courses]);
-
-  const filteredCourses = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    if (!needle) return campus.courses;
-    return campus.courses.filter((course) =>
-      [course.code, course.title, course.department, course.instructor, course.room]
-        .join(" ")
-        .toLowerCase()
-        .includes(needle)
-    );
-  }, [campus.courses, query]);
-
-  const totalCredits = campus.registrationPlan
-    .filter((item) => item.enrolled)
-    .reduce((sum, item) => sum + item.credits, 0);
-  const unreadMessages = campus.messages.filter((message) => !message.read).length;
   const role = currentUser?.role ?? "Student";
-  const permissions = roleAccess[role];
-  const visibleNavItems = navItems.filter((item) => permissions.views.includes(item.label));
+  const access = roleAccess[role];
+  const selectedCourse = campus.courses.find((course) => course.id === selectedCourseId) ?? campus.courses[0];
+  const faculty = campus.people.filter((person) => person.role === "Faculty");
+  const students = campus.people.filter((person) => person.role === "Student");
+  const visibleNavItems = navItems.filter((item) => access.views.includes(item.label));
+  const filteredCourses = campus.courses.filter((course) =>
+    [course.code, course.title, course.department, peopleNames(campus.people, course.facultyIds)]
+      .join(" ")
+      .toLowerCase()
+      .includes(query.trim().toLowerCase())
+  );
 
   useEffect(() => {
-    if (!permissions.views.includes(activeView)) {
-      setActiveView("Dashboard");
-    }
-  }, [activeView, permissions.views]);
+    if (!access.views.includes(activeView)) setActiveView("Dashboard");
+  }, [access.views, activeView]);
+
+  function can(permission: Permission) {
+    return access.permissions.includes(permission);
+  }
 
   function notify(message: string, tone: Toast["tone"] = "success") {
     setToast({ message, tone });
   }
 
-  function can(permission: Permission) {
-    return permissions.permissions.includes(permission);
-  }
-
-  function deny(action = "You do not have permission for that action") {
-    notify(action, "warning");
+  function deny(message: string) {
+    notify(message, "warning");
   }
 
   function login(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const user = demoUsers.find(
       (account) =>
-        account.email.toLowerCase() === loginForm.email.trim().toLowerCase() &&
-        account.password === loginForm.password
+        account.email.toLowerCase() === loginForm.email.trim().toLowerCase() && account.password === loginForm.password
     );
     if (!user) {
-      notify("Invalid email or password", "warning");
+      deny("Invalid email or password");
       return;
     }
     window.localStorage.setItem(sessionKey, user.id);
     setCurrentUser(user);
     setActiveView("Dashboard");
-    notify(`Signed in as ${user.role}`);
   }
 
   function loginAs(user: DemoUser) {
@@ -211,284 +181,234 @@ export default function Home() {
     setCurrentUser(user);
     setLoginForm({ email: user.email, password: user.password });
     setActiveView("Dashboard");
-    notify(`Signed in as ${user.role}`);
   }
 
   function logout() {
     window.localStorage.removeItem(sessionKey);
     setCurrentUser(null);
-    setLoginForm({ email: "registrar@northvalley.edu", password: "registrar123" });
   }
 
-  function resetDemoData() {
-    if (!can("manageSettings")) {
-      deny("Only authorized staff can reset demo data");
-      return;
-    }
-    setCampus(initialCampusState);
-    notify("Demo data restored");
-  }
-
-  function createSection(event: FormEvent<HTMLFormElement>) {
+  function createCourse(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!can("createSection")) {
-      deny("Only registrars can create course sections");
-      return;
-    }
-    const capacity = Math.max(1, Number(newCourse.capacity));
+    if (!can("manageCourses")) return deny("Only administrators can create courses");
     const course: Course = {
-      ...newCourse,
       id: crypto.randomUUID(),
       code: newCourse.code.trim().toUpperCase(),
       title: newCourse.title.trim(),
-      instructor: newCourse.instructor.trim(),
       department: newCourse.department.trim(),
-      capacity,
-      credits: Math.max(1, Number(newCourse.credits)),
-      enrolled: 0,
-      status: "Open"
+      credits: Number(newCourse.credits),
+      capacity: Number(newCourse.capacity),
+      schedule: newCourse.schedule.trim(),
+      room: newCourse.room.trim(),
+      facultyIds: [],
+      studentIds: [],
+      weeks: []
     };
-
-    setCampus((current) => ({
-      ...current,
-      courses: [course, ...current.courses],
-      gradebook: [{ id: crypto.randomUUID(), course: course.code, average: 0, missing: 0 }, ...current.gradebook],
-      activity: [
-        { id: crypto.randomUUID(), title: `${course.code} section created`, detail: `${course.instructor} - ${selectedTerm}` },
-        ...current.activity
-      ]
-    }));
+    setCampus((current) => ({ ...current, courses: [course, ...current.courses] }));
+    setSelectedCourseId(course.id);
     setNewCourse(blankCourse);
-    setSectionFormOpen(false);
+    setCourseFormOpen(false);
     notify(`${course.code} created`);
   }
 
-  function addCourseToPlan(course: Course) {
-    if (!can("addCourseToPlan")) {
-      deny("Only students and advisors can add courses to a plan");
-      return;
-    }
-    const existing = campus.registrationPlan.some((item) => item.code === course.code);
-    if (existing) {
-      notify(`${course.code} is already in the student plan`, "warning");
-      return;
-    }
+  function updateSelectedCourse(field: keyof Course, value: string | number) {
+    if (!can("manageCourses")) return deny("Only administrators can modify courses");
     setCampus((current) => ({
       ...current,
-      registrationPlan: [
-        ...current.registrationPlan,
-        {
-          id: crypto.randomUUID(),
-          code: course.code,
-          title: course.title,
-          credits: course.credits,
-          ready: course.status === "Open",
-          enrolled: false
-        }
-      ]
+      courses: current.courses.map((course) => (course.id === selectedCourse.id ? { ...course, [field]: value } : course))
     }));
-    notify(`${course.code} added to plan`);
   }
 
-  function toggleEnrollment(planId: string) {
-    if (!can("enroll")) {
-      deny("Only students can enroll or drop planned courses");
-      return;
-    }
-    const planItem = campus.registrationPlan.find((item) => item.id === planId);
-    if (!planItem) return;
-    if (!planItem.ready && !planItem.enrolled) {
-      notify("Advisor approval is required before enrollment", "warning");
-      return;
-    }
-
-    const isEnrolling = !planItem.enrolled;
+  function assignPerson(courseId: string, personId: string, type: "faculty" | "student") {
+    if (!can("manageRoster")) return deny("Only administrators can assign faculty or students");
     setCampus((current) => ({
       ...current,
-      registrationPlan: current.registrationPlan.map((item) =>
-        item.id === planId ? { ...item, enrolled: isEnrolling } : item
-      ),
-      courses: current.courses.map((course) =>
-        course.code === planItem.code
-          ? {
-              ...course,
-              enrolled: Math.max(0, course.enrolled + (isEnrolling ? 1 : -1)),
-              status:
-                isEnrolling && course.enrolled + 1 >= course.capacity
-                  ? "Waitlist"
-                  : course.status === "Waitlist" && course.enrolled < course.capacity
-                    ? "Open"
-                    : course.status
-            }
-          : course
-      ),
-      activity: [
+      courses: current.courses.map((course) => {
+        if (course.id !== courseId) return course;
+        const field = type === "faculty" ? "facultyIds" : "studentIds";
+        return course[field].includes(personId) ? course : { ...course, [field]: [...course[field], personId] };
+      })
+    }));
+    notify(`${type === "faculty" ? "Faculty" : "Student"} added to course`);
+  }
+
+  function requestEnrollment(courseId: string) {
+    if (!currentUser || !can("requestEnrollment")) return deny("Only students can request course registration");
+    const course = campus.courses.find((item) => item.id === courseId);
+    if (!course) return;
+    if (course.studentIds.includes(currentUser.id)) return deny("You are already enrolled in this course");
+    const existing = campus.enrollmentRequests.some(
+      (request) => request.courseId === courseId && request.studentId === currentUser.id && request.status === "Pending Advisor Approval"
+    );
+    if (existing) return deny("This enrollment request is already waiting for advisor approval");
+    setCampus((current) => ({
+      ...current,
+      enrollmentRequests: [
         {
           id: crypto.randomUUID(),
-          title: `${isEnrolling ? "Enrolled in" : "Dropped"} ${planItem.code}`,
-          detail: `Student schedule updated - ${selectedTerm}`
+          courseId,
+          studentId: currentUser.id,
+          status: "Pending Advisor Approval",
+          requestedAt: "Just now"
         },
-        ...current.activity
+        ...current.enrollmentRequests
       ]
     }));
-    notify(`${planItem.code} ${isEnrolling ? "enrolled" : "dropped"}`);
+    notify("Enrollment request sent to advisor");
   }
 
-  function approvePlan() {
-    if (!can("approvePlan")) {
-      deny("Only advisors and registrars can approve registration plans");
-      return;
-    }
+  function decideEnrollment(requestId: string, decision: "Approved" | "Rejected") {
+    if (!can("approveEnrollment")) return deny("Only advisors can approve enrollment requests");
+    const request = campus.enrollmentRequests.find((item) => item.id === requestId);
+    if (!request) return;
     setCampus((current) => ({
       ...current,
-      registrationPlan: current.registrationPlan.map((item) => ({ ...item, ready: true })),
-      activity: [
-        { id: crypto.randomUUID(), title: "Student plan approved", detail: `${currentUser?.name ?? role} approved all planned courses` },
-        ...current.activity
-      ]
-    }));
-    notify("Registration plan approved");
-  }
-
-  function completeTask(taskId: string) {
-    if (!can("completeTeachingTask")) {
-      deny("Only instructors can update the teaching queue");
-      return;
-    }
-    const task = campus.teachingQueue.find((item) => item.id === taskId);
-    if (!task) return;
-    setCampus((current) => ({
-      ...current,
-      teachingQueue: current.teachingQueue.map((item) =>
-        item.id === taskId ? { ...item, completed: !item.completed } : item
+      enrollmentRequests: current.enrollmentRequests.map((item) =>
+        item.id === requestId ? { ...item, status: decision } : item
       ),
-      activity: [
-        { id: crypto.randomUUID(), title: `${task.title} updated`, detail: `${task.course} teaching queue` },
-        ...current.activity
-      ]
+      courses:
+        decision === "Approved"
+          ? current.courses.map((course) =>
+              course.id === request.courseId && !course.studentIds.includes(request.studentId)
+                ? { ...course, studentIds: [...course.studentIds, request.studentId] }
+                : course
+            )
+          : current.courses
     }));
+    notify(`Enrollment ${decision.toLowerCase()}`);
   }
 
-  function updateGrade(id: string, average: number) {
-    if (!can("editGrades")) {
-      deny("Only instructors can edit grades");
-      return;
-    }
+  function addWeek(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!can("manageContent")) return deny("Only faculty can create weekly course folders");
+    if (!newWeekTitle.trim()) return;
+    const week: CourseWeek = {
+      id: crypto.randomUUID(),
+      title: newWeekTitle.trim(),
+      lectureTitle: "New Lecture",
+      lectureBody: "Add lecture notes for this week.",
+      assignments: []
+    };
     setCampus((current) => ({
       ...current,
-      gradebook: current.gradebook.map((item) =>
-        item.id === id ? { ...item, average: Math.max(0, Math.min(100, average)) } : item
+      courses: current.courses.map((course) =>
+        course.id === selectedCourse.id ? { ...course, weeks: [...course.weeks, week] } : course
+      )
+    }));
+    setNewWeekTitle("");
+    notify("Weekly folder created");
+  }
+
+  function updateLecture(weekId: string, field: "lectureTitle" | "lectureBody", value: string) {
+    if (!can("manageContent")) return deny("Only faculty can edit lectures");
+    setCampus((current) => ({
+      ...current,
+      courses: current.courses.map((course) =>
+        course.id === selectedCourse.id
+          ? { ...course, weeks: course.weeks.map((week) => (week.id === weekId ? { ...week, [field]: value } : week)) }
+          : course
       )
     }));
   }
 
-  function resolveApproval(id: string) {
-    if (!can("resolveApprovals")) {
-      deny("Only registrars can resolve administrative approvals");
-      return;
-    }
-    const approval = campus.approvals.find((item) => item.id === id);
-    if (!approval) return;
-    setCampus((current) => ({
-      ...current,
-      approvals: current.approvals.map((item) =>
-        item.id === id ? { ...item, count: Math.max(0, item.count - 1) } : item
-      ),
-      activity: [
-        { id: crypto.randomUUID(), title: `${approval.title} resolved`, detail: `${approval.owner} queue reduced by 1` },
-        ...current.activity
-      ]
-    }));
-    notify("Approval item resolved");
-  }
-
-  function publishAnnouncement(event: FormEvent<HTMLFormElement>) {
+  function addAssignment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!can("publishAnnouncement")) {
-      deny("Only instructors can publish course announcements");
-      return;
-    }
-    if (!announcementText.trim()) return;
+    if (!can("manageContent")) return deny("Only faculty can create assignments");
+    const weekId = newAssignment.weekId || selectedCourse.weeks[0]?.id;
+    if (!weekId || !newAssignment.title.trim()) return;
+    const assignment: Assignment = {
+      id: crypto.randomUUID(),
+      title: newAssignment.title.trim(),
+      prompt: newAssignment.prompt.trim(),
+      due: newAssignment.due.trim(),
+      submissions: []
+    };
     setCampus((current) => ({
       ...current,
-      announcements: [
-        {
-          id: crypto.randomUUID(),
-          title: announcementText.trim(),
-          course: "All Courses",
-          body: "Published from the teaching workspace.",
-          publishedAt: "Just now"
-        },
-        ...current.announcements
-      ],
-      activity: [
-        { id: crypto.randomUUID(), title: "Announcement published", detail: announcementText.trim() },
-        ...current.activity
-      ]
+      courses: current.courses.map((course) =>
+        course.id === selectedCourse.id
+          ? {
+              ...course,
+              weeks: course.weeks.map((week) =>
+                week.id === weekId ? { ...week, assignments: [...week.assignments, assignment] } : week
+              )
+            }
+          : course
+      )
     }));
-    setAnnouncementText("");
-    notify("Announcement published");
+    setNewAssignment({ weekId, title: "", prompt: "", due: "" });
+    notify("Assignment created");
   }
 
-  function sendMessage(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!can("sendMessages")) {
-      deny("Your role can read messages but cannot send broadcasts");
-      return;
-    }
-    if (!messageDraft.subject.trim() || !messageDraft.body.trim()) return;
+  function submitAssignment(assignmentId: string) {
+    if (!currentUser || !can("submitAssignments")) return deny("Only students can submit assignments");
+    if (!submissionText.trim()) return deny("Add your submission before turning it in");
     setCampus((current) => ({
       ...current,
-      messages: [
-        {
-          id: crypto.randomUUID(),
-          from: `You to ${messageDraft.to}`,
-          subject: messageDraft.subject.trim(),
-          body: messageDraft.body.trim(),
-          read: true
-        },
-        ...current.messages
-      ],
-      activity: [
-        { id: crypto.randomUUID(), title: "Message sent", detail: `${messageDraft.subject} - ${messageDraft.to}` },
-        ...current.activity
-      ]
+      courses: current.courses.map((course) =>
+        course.id === selectedCourse.id
+          ? {
+              ...course,
+              weeks: course.weeks.map((week) => ({
+                ...week,
+                assignments: week.assignments.map((assignment) =>
+                  assignment.id === assignmentId
+                    ? {
+                        ...assignment,
+                        submissions: [
+                          ...assignment.submissions.filter((submission) => submission.studentId !== currentUser.id),
+                          {
+                            id: crypto.randomUUID(),
+                            studentId: currentUser.id,
+                            text: submissionText.trim(),
+                            submittedAt: "Just now"
+                          }
+                        ]
+                      }
+                    : assignment
+                )
+              }))
+            }
+          : course
+      )
     }));
-    setMessageDraft({ to: "All students", subject: "", body: "" });
-    notify("Message sent");
+    setSubmissionText("");
+    notify("Assignment submitted");
   }
 
-  function markMessageRead(id: string) {
+  function gradeSubmission(assignmentId: string, submissionId: string, grade: number) {
+    if (!can("gradeSubmissions")) return deny("Only faculty can grade submissions");
     setCampus((current) => ({
       ...current,
-      messages: current.messages.map((message) => (message.id === id ? { ...message, read: true } : message))
+      courses: current.courses.map((course) => ({
+        ...course,
+        weeks: course.weeks.map((week) => ({
+          ...week,
+          assignments: week.assignments.map((assignment) =>
+            assignment.id === assignmentId
+              ? {
+                  ...assignment,
+                  submissions: assignment.submissions.map((submission) =>
+                    submission.id === submissionId ? { ...submission, grade: Math.max(0, Math.min(100, grade)) } : submission
+                  )
+                }
+              : assignment
+          )
+        }))
+      }))
     }));
   }
 
-  function deleteMessage(id: string) {
-    setCampus((current) => ({
-      ...current,
-      messages: current.messages.filter((message) => message.id !== id)
-    }));
-    notify("Message deleted");
+  function resetDemoData() {
+    if (!can("manageSettings")) return deny("Only administrators can reset demo data");
+    setCampus(initialCampusState);
+    setSelectedCourseId(initialCampusState.courses[0].id);
+    notify("Demo data restored");
   }
-
-  const roleHelp: Record<Role, string> = {
-    Registrar: "Manage catalog, sections, enrollment capacity, overrides, and institutional approvals.",
-    Instructor: "Publish course content, complete teaching work, grade submissions, and contact learners.",
-    Student: "Plan registration, enroll in approved sections, read announcements, and track grades.",
-    Advisor: "Approve registration plans, monitor degree progress, and resolve academic requirements."
-  };
 
   if (!currentUser) {
     return (
-      <LoginScreen
-        login={login}
-        loginAs={loginAs}
-        loginForm={loginForm}
-        setLoginForm={setLoginForm}
-        toast={toast}
-      />
+      <LoginScreen login={login} loginAs={loginAs} loginForm={loginForm} setLoginForm={setLoginForm} toast={toast} />
     );
   }
 
@@ -517,7 +437,6 @@ export default function Home() {
               >
                 <Icon size={18} />
                 <span>{item.label}</span>
-                {item.label === "Messages" && unreadMessages > 0 ? <em>{unreadMessages}</em> : null}
               </button>
             );
           })}
@@ -526,8 +445,8 @@ export default function Home() {
         <section className="systemPanel" aria-label="System status">
           <ShieldCheck size={18} />
           <div>
-            <strong>PostgreSQL Ready</strong>
-            <span>Signed in permissions are enforced locally. Prisma is ready for database-backed auth.</span>
+            <strong>Role Based Access</strong>
+            <span>{role} privileges are enforced for registration, content, rosters, and grading.</span>
           </div>
         </section>
       </aside>
@@ -536,7 +455,7 @@ export default function Home() {
         <header className="topbar">
           <div>
             <span className="eyebrow">Academic Operations</span>
-            <h1>Registration, teaching, and learning command center</h1>
+            <h1>Registration, teaching, and learning workspace</h1>
           </div>
           <div className="toolbar">
             <div className="searchBox">
@@ -548,15 +467,10 @@ export default function Home() {
                 value={query}
               />
             </div>
-            <select aria-label="Select term" onChange={(event) => setSelectedTerm(event.target.value)} value={selectedTerm}>
-              {termOptions.map((term) => (
-                <option key={term}>{term}</option>
-              ))}
-            </select>
           </div>
         </header>
 
-        <section className="roleBar" aria-label="Role selector">
+        <section className="roleBar">
           <div className="accountBadge">
             <UsersRound size={18} />
             <div>
@@ -565,10 +479,10 @@ export default function Home() {
             </div>
           </div>
           <div className="roleActions">
-            {can("createSection") ? (
-              <button className="primaryButton" onClick={() => setSectionFormOpen(true)} type="button">
+            {can("manageCourses") ? (
+              <button className="primaryButton" onClick={() => setCourseFormOpen(true)} type="button">
                 <Plus size={18} />
-                Create Section
+                Create Course
               </button>
             ) : null}
             <button className="secondaryButton" onClick={logout} type="button">
@@ -580,179 +494,95 @@ export default function Home() {
 
         {toast ? <div className={`toast ${toast.tone}`}>{toast.message}</div> : null}
 
-        <section className="statsGrid" aria-label="Institution metrics">
-          {stats.map((stat) => (
-            <article className="metricCard" key={stat.label}>
-              <span>{stat.label}</span>
-              <strong>{stat.value}</strong>
-              <small>{stat.detail}</small>
-            </article>
-          ))}
-        </section>
+        <Stats campus={campus} />
 
         {activeView === "Dashboard" ? (
-          <DashboardView
-            activeRole={role}
-            addCourseToPlan={addCourseToPlan}
-            canAddCourseToPlan={can("addCourseToPlan")}
-            canApprovePlan={can("approvePlan")}
-            canCompleteTask={can("completeTeachingTask")}
-            canEnroll={can("enroll")}
-            canResolveApprovals={can("resolveApprovals")}
-            approvals={campus.approvals}
-            approvePlan={approvePlan}
-            courses={filteredCourses}
-            gradebook={campus.gradebook}
-            registrationPlan={campus.registrationPlan}
-            resolveApproval={resolveApproval}
-            selectedTerm={selectedTerm}
-            teachingQueue={campus.teachingQueue}
-            toggleEnrollment={toggleEnrollment}
-            totalCredits={totalCredits}
-            completeTask={completeTask}
-          />
+          <Dashboard campus={campus} role={role} currentUser={currentUser} />
         ) : null}
-
-        {activeView === "Registration" ? (
-          <RegistrationView
-            approvePlan={approvePlan}
-            canApprovePlan={can("approvePlan")}
-            canEnroll={can("enroll")}
-            plan={campus.registrationPlan}
-            selectedTerm={selectedTerm}
-            toggleEnrollment={toggleEnrollment}
-            totalCredits={totalCredits}
-          />
-        ) : null}
-
         {activeView === "Courses" ? (
           <CoursesView
-            addCourseToPlan={addCourseToPlan}
-            canAddCourseToPlan={can("addCourseToPlan")}
+            campus={campus}
+            canManageCourses={can("manageCourses")}
+            canManageRoster={can("manageRoster")}
+            canRequestEnrollment={can("requestEnrollment")}
             courses={filteredCourses}
-            selectedTerm={selectedTerm}
+            faculty={faculty}
+            students={students}
+            selectedCourse={selectedCourse}
+            setSelectedCourseId={setSelectedCourseId}
+            updateSelectedCourse={updateSelectedCourse}
+            assignPerson={assignPerson}
+            requestEnrollment={requestEnrollment}
           />
         ) : null}
-
-        {activeView === "Teaching" ? (
-          <TeachingView
-            announcementText={announcementText}
-            announcements={campus.announcements}
-            completeTask={completeTask}
-            canCompleteTask={can("completeTeachingTask")}
-            canEditGrades={can("editGrades")}
-            canPublishAnnouncement={can("publishAnnouncement")}
-            gradebook={campus.gradebook}
-            publishAnnouncement={publishAnnouncement}
-            setAnnouncementText={setAnnouncementText}
-            tasks={campus.teachingQueue}
-            updateGrade={updateGrade}
+        {activeView === "Enrollment" ? (
+          <EnrollmentView
+            campus={campus}
+            canApproveEnrollment={can("approveEnrollment")}
+            canRequestEnrollment={can("requestEnrollment")}
+            currentUser={currentUser}
+            decideEnrollment={decideEnrollment}
+            requestEnrollment={requestEnrollment}
           />
         ) : null}
-
-        {activeView === "Learning" ? (
-          <LearningView activity={campus.activity} announcements={campus.announcements} gradebook={campus.gradebook} />
-        ) : null}
-
-        {activeView === "Messages" ? (
-          <MessagesView
-            deleteMessage={deleteMessage}
-            draft={messageDraft}
-            canSendMessages={can("sendMessages")}
-            markRead={markMessageRead}
-            messages={campus.messages}
-            sendMessage={sendMessage}
-            setDraft={setMessageDraft}
+        {activeView === "Course Content" ? (
+          <ContentView
+            canManageContent={can("manageContent")}
+            canSubmitAssignments={can("submitAssignments")}
+            course={selectedCourse}
+            currentUser={currentUser}
+            newAssignment={newAssignment}
+            newWeekTitle={newWeekTitle}
+            setNewAssignment={setNewAssignment}
+            setNewWeekTitle={setNewWeekTitle}
+            addAssignment={addAssignment}
+            addWeek={addWeek}
+            updateLecture={updateLecture}
+            submissionText={submissionText}
+            setSubmissionText={setSubmissionText}
+            submitAssignment={submitAssignment}
           />
         ) : null}
-
+        {activeView === "Grades" ? (
+          <GradesView
+            canGradeSubmissions={can("gradeSubmissions")}
+            courses={campus.courses}
+            currentUser={currentUser}
+            people={campus.people}
+            gradeSubmission={gradeSubmission}
+          />
+        ) : null}
+        {activeView === "Messages" ? <MessagesView messages={campus.messages} /> : null}
         {activeView === "Settings" ? (
           <SettingsView
-            institutionName={campus.institutionName}
             canManageSettings={can("manageSettings")}
+            institutionName={campus.institutionName}
             resetDemoData={resetDemoData}
-            role={role}
-            roleHelp={roleHelp[role]}
             setInstitutionName={(institutionName) => setCampus((current) => ({ ...current, institutionName }))}
           />
         ) : null}
       </section>
 
-      {sectionFormOpen ? (
-        <div className="modalBackdrop" role="presentation">
-          <form className="modal" onSubmit={createSection}>
+      {courseFormOpen ? (
+        <div className="modalBackdrop">
+          <form className="modal" onSubmit={createCourse}>
             <div className="panelHeader">
               <div>
-                <span className="eyebrow">Catalog Management</span>
-                <h2>Create course section</h2>
+                <span className="eyebrow">Administration</span>
+                <h2>Create course</h2>
               </div>
-              <button className="iconButton" onClick={() => setSectionFormOpen(false)} type="button" aria-label="Close">
+              <button className="iconButton" onClick={() => setCourseFormOpen(false)} type="button" aria-label="Close">
                 <X size={18} />
               </button>
             </div>
-            <div className="formGrid">
-              <label>
-                Code
-                <input required value={newCourse.code} onChange={(event) => setNewCourse({ ...newCourse, code: event.target.value })} />
-              </label>
-              <label>
-                Title
-                <input required value={newCourse.title} onChange={(event) => setNewCourse({ ...newCourse, title: event.target.value })} />
-              </label>
-              <label>
-                Instructor
-                <input
-                  required
-                  value={newCourse.instructor}
-                  onChange={(event) => setNewCourse({ ...newCourse, instructor: event.target.value })}
-                />
-              </label>
-              <label>
-                Department
-                <input
-                  required
-                  value={newCourse.department}
-                  onChange={(event) => setNewCourse({ ...newCourse, department: event.target.value })}
-                />
-              </label>
-              <label>
-                Capacity
-                <input
-                  min="1"
-                  type="number"
-                  value={newCourse.capacity}
-                  onChange={(event) => setNewCourse({ ...newCourse, capacity: Number(event.target.value) })}
-                />
-              </label>
-              <label>
-                Credits
-                <input
-                  min="1"
-                  type="number"
-                  value={newCourse.credits}
-                  onChange={(event) => setNewCourse({ ...newCourse, credits: Number(event.target.value) })}
-                />
-              </label>
-              <label>
-                Schedule
-                <input
-                  required
-                  value={newCourse.schedule}
-                  onChange={(event) => setNewCourse({ ...newCourse, schedule: event.target.value })}
-                />
-              </label>
-              <label>
-                Room
-                <input required value={newCourse.room} onChange={(event) => setNewCourse({ ...newCourse, room: event.target.value })} />
-              </label>
-            </div>
+            <CourseFields course={newCourse} setCourse={setNewCourse} />
             <div className="modalActions">
-              <button className="secondaryButton" onClick={() => setSectionFormOpen(false)} type="button">
+              <button className="secondaryButton" onClick={() => setCourseFormOpen(false)} type="button">
                 Cancel
               </button>
               <button className="primaryButton" type="submit">
                 <Save size={18} />
-                Save Section
+                Save Course
               </button>
             </div>
           </form>
@@ -788,16 +618,11 @@ function LoginScreen(props: {
         <form className="stackedForm" onSubmit={props.login}>
           <label>
             Email
-            <input
-              autoComplete="username"
-              value={props.loginForm.email}
-              onChange={(event) => props.setLoginForm({ ...props.loginForm, email: event.target.value })}
-            />
+            <input value={props.loginForm.email} onChange={(event) => props.setLoginForm({ ...props.loginForm, email: event.target.value })} />
           </label>
           <label>
             Password
             <input
-              autoComplete="current-password"
               type="password"
               value={props.loginForm.password}
               onChange={(event) => props.setLoginForm({ ...props.loginForm, password: event.target.value })}
@@ -810,12 +635,8 @@ function LoginScreen(props: {
         </form>
         {props.toast ? <div className={`toast ${props.toast.tone}`}>{props.toast.message}</div> : null}
       </section>
-
-      <section className="demoAccounts" aria-label="Demo accounts">
-        <div>
-          <span className="eyebrow">Demo Accounts</span>
-          <h2>Choose a role to test privileges</h2>
-        </div>
+      <section className="demoAccounts">
+        <span className="eyebrow">Demo Accounts</span>
         {demoUsers.map((user) => (
           <button className="accountOption" key={user.id} onClick={() => props.loginAs(user)} type="button">
             <div>
@@ -830,262 +651,467 @@ function LoginScreen(props: {
   );
 }
 
-function DashboardView(props: {
-  activeRole: Role;
-  addCourseToPlan: (course: Course) => void;
-  canAddCourseToPlan: boolean;
-  canApprovePlan: boolean;
-  canCompleteTask: boolean;
-  canEnroll: boolean;
-  canResolveApprovals: boolean;
-  approvals: CampusState["approvals"];
-  approvePlan: () => void;
-  completeTask: (taskId: string) => void;
-  courses: CampusState["courses"];
-  gradebook: CampusState["gradebook"];
-  registrationPlan: CampusState["registrationPlan"];
-  resolveApproval: (id: string) => void;
-  selectedTerm: string;
-  teachingQueue: CampusState["teachingQueue"];
-  toggleEnrollment: (planId: string) => void;
-  totalCredits: number;
-}) {
+function Stats({ campus }: { campus: CampusState }) {
+  const enrolled = campus.courses.reduce((sum, course) => sum + course.studentIds.length, 0);
+  const pending = campus.enrollmentRequests.filter((request) => request.status === "Pending Advisor Approval").length;
   return (
-    <>
-      <section className="contentGrid">
-        <div className="mainColumn">
-          <CoursesPanel
-            courses={props.courses}
-            selectedTerm={props.selectedTerm}
-            addCourseToPlan={props.addCourseToPlan}
-            canAddCourseToPlan={props.canAddCourseToPlan}
-          />
-          <RegistrationPanel
-            approvePlan={props.approvePlan}
-            canApprovePlan={props.canApprovePlan}
-            canEnroll={props.canEnroll}
-            plan={props.registrationPlan}
-            toggleEnrollment={props.toggleEnrollment}
-            totalCredits={props.totalCredits}
-          />
-        </div>
+    <section className="statsGrid">
+      <Metric label="Courses" value={String(campus.courses.length)} detail="Administrator-managed catalog" />
+      <Metric label="Enrollments" value={String(enrolled)} detail="Approved student-course links" />
+      <Metric label="Pending approvals" value={String(pending)} detail="Advisor action queue" />
+      <Metric label="Faculty" value={String(campus.people.filter((person) => person.role === "Faculty").length)} detail="Available instructors" />
+    </section>
+  );
+}
 
-        <aside className="sideColumn">
-          <section className="panel compact">
-            <div className="panelHeader">
-              <div>
-                <span className="eyebrow">Current Role</span>
-                <h2>{props.activeRole}</h2>
-              </div>
-              <UsersRound size={20} />
-            </div>
-            <p className="muted">Permissions, dashboards, and workflow queues adapt by selected role in this MVP.</p>
-          </section>
-          <TeachingQueuePanel canCompleteTask={props.canCompleteTask} completeTask={props.completeTask} tasks={props.teachingQueue} />
-        </aside>
-      </section>
+function Metric({ label, value, detail }: { label: string; value: string; detail: string }) {
+  return (
+    <article className="metricCard">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{detail}</small>
+    </article>
+  );
+}
 
-      <section className="bottomGrid">
-        <GradebookPanel gradebook={props.gradebook} readonly />
-        <ApprovalsPanel
-          approvals={props.approvals}
-          canResolveApprovals={props.canResolveApprovals}
-          resolveApproval={props.resolveApproval}
-        />
-      </section>
-    </>
+function Dashboard({ campus, currentUser, role }: { campus: CampusState; currentUser: Person; role: UserRole }) {
+  const myCourses =
+    role === "Faculty"
+      ? campus.courses.filter((course) => course.facultyIds.includes(currentUser.id))
+      : role === "Student"
+        ? campus.courses.filter((course) => course.studentIds.includes(currentUser.id))
+        : campus.courses;
+  return (
+    <section className="contentGrid">
+      <div className="mainColumn">
+        <section className="panel">
+          <span className="eyebrow">Role Workflow</span>
+          <h2>{role} workspace</h2>
+          <p className="muted withTop">{roleWorkflow(role)}</p>
+        </section>
+        <CourseCards campus={campus} courses={myCourses} />
+      </div>
+      <aside className="sideColumn single">
+        <EnrollmentQueue campus={campus} readonly />
+      </aside>
+    </section>
   );
 }
 
 function CoursesView(props: {
-  addCourseToPlan: (course: Course) => void;
-  canAddCourseToPlan: boolean;
-  courses: CampusState["courses"];
-  selectedTerm: string;
-}) {
-  return <CoursesPanel {...props} />;
-}
-
-function RegistrationView(props: {
-  approvePlan: () => void;
-  canApprovePlan: boolean;
-  canEnroll: boolean;
-  plan: CampusState["registrationPlan"];
-  selectedTerm: string;
-  toggleEnrollment: (planId: string) => void;
-  totalCredits: number;
+  assignPerson: (courseId: string, personId: string, type: "faculty" | "student") => void;
+  campus: CampusState;
+  canManageCourses: boolean;
+  canManageRoster: boolean;
+  canRequestEnrollment: boolean;
+  courses: Course[];
+  faculty: Person[];
+  requestEnrollment: (courseId: string) => void;
+  selectedCourse: Course;
+  setSelectedCourseId: (id: string) => void;
+  students: Person[];
+  updateSelectedCourse: (field: keyof Course, value: string | number) => void;
 }) {
   return (
-    <>
+    <section className="contentGrid">
+      <div className="mainColumn">
+        <CourseCards campus={props.campus} courses={props.courses} onSelect={props.setSelectedCourseId} />
+      </div>
+      <aside className="sideColumn single">
+        <section className="panel compact">
+          <span className="eyebrow">Selected Course</span>
+          <h2>{props.selectedCourse.code}</h2>
+          {props.canManageCourses ? (
+            <div className="stackedForm">
+              <label>
+                Title
+                <input value={props.selectedCourse.title} onChange={(event) => props.updateSelectedCourse("title", event.target.value)} />
+              </label>
+              <label>
+                Capacity
+                <input
+                  type="number"
+                  value={props.selectedCourse.capacity}
+                  onChange={(event) => props.updateSelectedCourse("capacity", Number(event.target.value))}
+                />
+              </label>
+              <label>
+                Schedule
+                <input value={props.selectedCourse.schedule} onChange={(event) => props.updateSelectedCourse("schedule", event.target.value)} />
+              </label>
+            </div>
+          ) : (
+            <p className="muted withTop">{props.selectedCourse.title}</p>
+          )}
+        </section>
+        {props.canManageRoster ? (
+          <RosterManager
+            assignPerson={props.assignPerson}
+            course={props.selectedCourse}
+            faculty={props.faculty}
+            people={props.campus.people}
+            students={props.students}
+          />
+        ) : null}
+        {props.canRequestEnrollment ? (
+          <button className="primaryButton wideButton" onClick={() => props.requestEnrollment(props.selectedCourse.id)} type="button">
+            <UserPlus size={18} />
+            Request Enrollment
+          </button>
+        ) : null}
+      </aside>
+    </section>
+  );
+}
+
+function CourseCards(props: { campus: CampusState; courses: Course[]; onSelect?: (id: string) => void }) {
+  return (
+    <section className="panel">
       <div className="panelHeader">
         <div>
-          <span className="eyebrow">Registration</span>
-          <h2>{props.selectedTerm} student plan</h2>
+          <span className="eyebrow">Course Catalog</span>
+          <h2>Courses and rosters</h2>
         </div>
-        <strong>{props.totalCredits} enrolled credits</strong>
       </div>
-      <RegistrationPanel {...props} />
-    </>
+      <div className="courseCards">
+        {props.courses.map((course) => (
+          <article className="courseCard" key={course.id}>
+            <div>
+              <strong>{course.code}</strong>
+              <span>{course.title}</span>
+            </div>
+            <p>{course.department} - {course.credits} credits - {course.schedule}</p>
+            <small>Faculty: {peopleNames(props.campus.people, course.facultyIds) || "Unassigned"}</small>
+            <small>
+              Students: {course.studentIds.length}/{course.capacity}
+            </small>
+            {props.onSelect ? (
+              <button className="secondaryButton" onClick={() => props.onSelect?.(course.id)} type="button">
+                Manage
+              </button>
+            ) : null}
+          </article>
+        ))}
+      </div>
+    </section>
   );
 }
 
-function TeachingView(props: {
-  announcementText: string;
-  announcements: CampusState["announcements"];
-  canCompleteTask: boolean;
-  canEditGrades: boolean;
-  canPublishAnnouncement: boolean;
-  completeTask: (taskId: string) => void;
-  gradebook: CampusState["gradebook"];
-  publishAnnouncement: (event: FormEvent<HTMLFormElement>) => void;
-  setAnnouncementText: (value: string) => void;
-  tasks: CampusState["teachingQueue"];
-  updateGrade: (id: string, average: number) => void;
+function RosterManager(props: {
+  assignPerson: (courseId: string, personId: string, type: "faculty" | "student") => void;
+  course: Course;
+  faculty: Person[];
+  people: Person[];
+  students: Person[];
 }) {
+  return (
+    <section className="panel compact">
+      <span className="eyebrow">Roster Management</span>
+      <div className="stackedForm">
+        <label>
+          Add faculty
+          <select onChange={(event) => props.assignPerson(props.course.id, event.target.value, "faculty")} value="">
+            <option value="" disabled>
+              Select faculty
+            </option>
+            {props.faculty.map((person) => (
+              <option key={person.id} value={person.id}>
+                {person.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Add student
+          <select onChange={(event) => props.assignPerson(props.course.id, event.target.value, "student")} value="">
+            <option value="" disabled>
+              Select student
+            </option>
+            {props.students.map((person) => (
+              <option key={person.id} value={person.id}>
+                {person.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <p className="muted withTop">Faculty: {peopleNames(props.people, props.course.facultyIds) || "None"}</p>
+      <p className="muted">Students: {peopleNames(props.people, props.course.studentIds) || "None"}</p>
+    </section>
+  );
+}
+
+function EnrollmentView(props: {
+  campus: CampusState;
+  canApproveEnrollment: boolean;
+  canRequestEnrollment: boolean;
+  currentUser: Person;
+  decideEnrollment: (requestId: string, decision: "Approved" | "Rejected") => void;
+  requestEnrollment: (courseId: string) => void;
+}) {
+  const requests =
+    props.currentUser.role === "Student"
+      ? props.campus.enrollmentRequests.filter((request) => request.studentId === props.currentUser.id)
+      : props.campus.enrollmentRequests;
   return (
     <section className="contentGrid">
       <div className="mainColumn">
-        <TeachingQueuePanel canCompleteTask={props.canCompleteTask} completeTask={props.completeTask} tasks={props.tasks} />
-        <GradebookPanel
-          gradebook={props.gradebook}
-          readonly={!props.canEditGrades}
-          updateGrade={props.canEditGrades ? props.updateGrade : undefined}
+        <EnrollmentQueue
+          campus={props.campus}
+          canApproveEnrollment={props.canApproveEnrollment}
+          decideEnrollment={props.decideEnrollment}
+          requests={requests}
         />
-        <section className="panel">
-          <div className="panelHeader">
-            <div>
-              <span className="eyebrow">Course Content</span>
-              <h2>Publish announcement</h2>
-            </div>
-          </div>
-          <form className="composeForm" onSubmit={props.publishAnnouncement}>
-            <input
-              placeholder="Example: Midterm review guide is now available"
-              value={props.announcementText}
-              onChange={(event) => props.setAnnouncementText(event.target.value)}
-            />
-            <button className="primaryButton" disabled={!props.canPublishAnnouncement} type="submit">
-              <Send size={18} />
-              Publish
-            </button>
-          </form>
-        </section>
       </div>
-      <aside className="sideColumn single">
-        <AnnouncementsPanel announcements={props.announcements} />
-      </aside>
+      {props.canRequestEnrollment ? (
+        <aside className="sideColumn single">
+          <section className="panel compact">
+            <span className="eyebrow">Register</span>
+            <div className="stackedForm">
+              {props.campus.courses.map((course) => (
+                <button className="secondaryButton" key={course.id} onClick={() => props.requestEnrollment(course.id)} type="button">
+                  Request {course.code}
+                </button>
+              ))}
+            </div>
+          </section>
+        </aside>
+      ) : null}
     </section>
   );
 }
 
-function LearningView(props: {
-  activity: CampusState["activity"];
-  announcements: CampusState["announcements"];
-  gradebook: CampusState["gradebook"];
+function EnrollmentQueue(props: {
+  campus: CampusState;
+  canApproveEnrollment?: boolean;
+  decideEnrollment?: (requestId: string, decision: "Approved" | "Rejected") => void;
+  readonly?: boolean;
+  requests?: EnrollmentRequest[];
+}) {
+  const requests = props.requests ?? props.campus.enrollmentRequests;
+  return (
+    <section className="panel">
+      <span className="eyebrow">Enrollment Queue</span>
+      <div className="approvalList withTop">
+        {requests.map((request) => (
+          <article key={request.id}>
+            <div>
+              <strong>{personName(props.campus.people, request.studentId)}</strong>
+              <small>{courseName(props.campus.courses, request.courseId)} - {request.requestedAt}</small>
+            </div>
+            <mark className={request.status === "Approved" ? "open" : request.status === "Rejected" ? "closed" : "attention"}>
+              {request.status}
+            </mark>
+            {props.canApproveEnrollment && request.status === "Pending Advisor Approval" ? (
+              <div className="rowActions">
+                <button className="secondaryButton" onClick={() => props.decideEnrollment?.(request.id, "Approved")} type="button">
+                  Approve
+                </button>
+                <button className="secondaryButton" onClick={() => props.decideEnrollment?.(request.id, "Rejected")} type="button">
+                  Reject
+                </button>
+              </div>
+            ) : null}
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ContentView(props: {
+  addAssignment: (event: FormEvent<HTMLFormElement>) => void;
+  addWeek: (event: FormEvent<HTMLFormElement>) => void;
+  canManageContent: boolean;
+  canSubmitAssignments: boolean;
+  course: Course;
+  currentUser: Person;
+  newAssignment: { weekId: string; title: string; prompt: string; due: string };
+  newWeekTitle: string;
+  setNewAssignment: (value: { weekId: string; title: string; prompt: string; due: string }) => void;
+  setNewWeekTitle: (value: string) => void;
+  setSubmissionText: (value: string) => void;
+  submissionText: string;
+  submitAssignment: (assignmentId: string) => void;
+  updateLecture: (weekId: string, field: "lectureTitle" | "lectureBody", value: string) => void;
 }) {
   return (
     <section className="contentGrid">
       <div className="mainColumn">
-        <GradebookPanel gradebook={props.gradebook} readonly />
         <section className="panel">
-          <span className="eyebrow">Learning Activity</span>
-          <div className="activityList spacious">
-            {props.activity.map((item) => (
-              <article key={item.id}>
-                <strong>{item.title}</strong>
-                <small>{item.detail}</small>
+          <span className="eyebrow">Weekly Course Folders</span>
+          <h2>{props.course.code} content</h2>
+          <div className="weekList">
+            {props.course.weeks.map((week) => (
+              <article className="weekFolder" key={week.id}>
+                <div className="panelHeader">
+                  <div>
+                    <strong>{week.title}</strong>
+                    {props.canManageContent ? (
+                      <input value={week.lectureTitle} onChange={(event) => props.updateLecture(week.id, "lectureTitle", event.target.value)} />
+                    ) : (
+                      <span>{week.lectureTitle}</span>
+                    )}
+                  </div>
+                  <FileText size={20} />
+                </div>
+                {props.canManageContent ? (
+                  <textarea value={week.lectureBody} onChange={(event) => props.updateLecture(week.id, "lectureBody", event.target.value)} />
+                ) : (
+                  <p>{week.lectureBody}</p>
+                )}
+                <div className="assignmentList">
+                  {week.assignments.map((assignment) => {
+                    const mySubmission = assignment.submissions.find((submission) => submission.studentId === props.currentUser.id);
+                    return (
+                      <article key={assignment.id}>
+                        <strong>{assignment.title}</strong>
+                        <small>Due {assignment.due}</small>
+                        <p>{assignment.prompt}</p>
+                        {props.canSubmitAssignments ? (
+                          <>
+                            <textarea
+                              placeholder="Write your assignment submission"
+                              value={props.submissionText}
+                              onChange={(event) => props.setSubmissionText(event.target.value)}
+                            />
+                            <button className="secondaryButton" onClick={() => props.submitAssignment(assignment.id)} type="button">
+                              Submit Assignment
+                            </button>
+                            {mySubmission ? <small>Submitted: {mySubmission.text}</small> : null}
+                          </>
+                        ) : null}
+                      </article>
+                    );
+                  })}
+                </div>
               </article>
             ))}
           </div>
         </section>
       </div>
-      <aside className="sideColumn single">
-        <AnnouncementsPanel announcements={props.announcements} />
-      </aside>
+      {props.canManageContent ? (
+        <aside className="sideColumn single">
+          <section className="panel compact">
+            <span className="eyebrow">Faculty Tools</span>
+            <form className="stackedForm" onSubmit={props.addWeek}>
+              <label>
+                New weekly folder
+                <input value={props.newWeekTitle} onChange={(event) => props.setNewWeekTitle(event.target.value)} />
+              </label>
+              <button className="primaryButton" type="submit">
+                <Plus size={18} />
+                Add Week
+              </button>
+            </form>
+            <form className="stackedForm" onSubmit={props.addAssignment}>
+              <label>
+                Folder
+                <select
+                  value={props.newAssignment.weekId || props.course.weeks[0]?.id || ""}
+                  onChange={(event) => props.setNewAssignment({ ...props.newAssignment, weekId: event.target.value })}
+                >
+                  {props.course.weeks.map((week) => (
+                    <option key={week.id} value={week.id}>
+                      {week.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Assignment title
+                <input value={props.newAssignment.title} onChange={(event) => props.setNewAssignment({ ...props.newAssignment, title: event.target.value })} />
+              </label>
+              <label>
+                Prompt
+                <textarea value={props.newAssignment.prompt} onChange={(event) => props.setNewAssignment({ ...props.newAssignment, prompt: event.target.value })} />
+              </label>
+              <label>
+                Due
+                <input value={props.newAssignment.due} onChange={(event) => props.setNewAssignment({ ...props.newAssignment, due: event.target.value })} />
+              </label>
+              <button className="primaryButton" type="submit">
+                <Plus size={18} />
+                Add Assignment
+              </button>
+            </form>
+          </section>
+        </aside>
+      ) : null}
     </section>
   );
 }
 
-function MessagesView(props: {
-  canSendMessages: boolean;
-  deleteMessage: (id: string) => void;
-  draft: { to: string; subject: string; body: string };
-  markRead: (id: string) => void;
-  messages: CampusState["messages"];
-  sendMessage: (event: FormEvent<HTMLFormElement>) => void;
-  setDraft: (draft: { to: string; subject: string; body: string }) => void;
+function GradesView(props: {
+  canGradeSubmissions: boolean;
+  courses: Course[];
+  currentUser: Person;
+  gradeSubmission: (assignmentId: string, submissionId: string, grade: number) => void;
+  people: Person[];
 }) {
+  const courses =
+    props.currentUser.role === "Student"
+      ? props.courses.filter((course) => course.studentIds.includes(props.currentUser.id))
+      : props.currentUser.role === "Faculty"
+        ? props.courses.filter((course) => course.facultyIds.includes(props.currentUser.id))
+        : props.courses;
   return (
-    <section className="contentGrid">
-      <div className="mainColumn">
-        <section className="panel">
-          <div className="panelHeader">
-            <div>
-              <span className="eyebrow">Inbox</span>
-              <h2>Messages and notifications</h2>
-            </div>
-          </div>
-          <div className="messageList">
-            {props.messages.map((message) => (
-              <article className={message.read ? "" : "unread"} key={message.id}>
-                <div>
-                  <strong>{message.subject}</strong>
-                  <small>{message.from}</small>
-                  <p>{message.body}</p>
-                </div>
-                <div className="rowActions">
-                  {!message.read ? (
-                    <button className="secondaryButton" onClick={() => props.markRead(message.id)} type="button">
-                      Mark Read
-                    </button>
-                  ) : null}
-                  <button className="iconButton" onClick={() => props.deleteMessage(message.id)} type="button" aria-label="Delete message">
-                    <Trash2 size={17} />
-                  </button>
-                </div>
-              </article>
-            ))}
-          </div>
-        </section>
+    <section className="panel">
+      <span className="eyebrow">Grades</span>
+      <div className="gradeBars withTop">
+        {courses.flatMap((course) =>
+          course.weeks.flatMap((week) =>
+            week.assignments.flatMap((assignment) =>
+              assignment.submissions
+                .filter((submission) => props.currentUser.role !== "Student" || submission.studentId === props.currentUser.id)
+                .map((submission) => (
+                  <article key={submission.id}>
+                    <div>
+                      <strong>{course.code} - {assignment.title}</strong>
+                      <span>{personName(props.people, submission.studentId)}</span>
+                    </div>
+                    <p>{submission.text}</p>
+                    {props.canGradeSubmissions ? (
+                      <label className="gradeInput">
+                        Grade
+                        <input
+                          max="100"
+                          min="0"
+                          type="number"
+                          value={submission.grade ?? ""}
+                          onChange={(event) => props.gradeSubmission(assignment.id, submission.id, Number(event.target.value))}
+                        />
+                      </label>
+                    ) : (
+                      <mark className={submission.grade === undefined ? "attention" : "open"}>
+                        {submission.grade === undefined ? "Not graded" : `${submission.grade}%`}
+                      </mark>
+                    )}
+                  </article>
+                ))
+            )
+          )
+        )}
       </div>
-      <aside className="sideColumn single">
-        <section className="panel">
-          <span className="eyebrow">Compose</span>
-          <form className="stackedForm" onSubmit={props.sendMessage}>
-            <label>
-              To
-              <select value={props.draft.to} onChange={(event) => props.setDraft({ ...props.draft, to: event.target.value })}>
-                <option>All students</option>
-                <option>All instructors</option>
-                <option>Advisors</option>
-                <option>Registrar Office</option>
-              </select>
-            </label>
-            <label>
-              Subject
-              <input
-                required
-                value={props.draft.subject}
-                onChange={(event) => props.setDraft({ ...props.draft, subject: event.target.value })}
-              />
-            </label>
-            <label>
-              Body
-              <textarea
-                required
-                rows={6}
-                value={props.draft.body}
-                onChange={(event) => props.setDraft({ ...props.draft, body: event.target.value })}
-              />
-            </label>
-            <button className="primaryButton" disabled={!props.canSendMessages} type="submit">
-              <Send size={18} />
-              Send
-            </button>
-            {!props.canSendMessages ? <p className="muted">Your role can read messages but cannot send broadcasts.</p> : null}
-          </form>
-        </section>
-      </aside>
+    </section>
+  );
+}
+
+function MessagesView({ messages }: { messages: CampusState["messages"] }) {
+  return (
+    <section className="panel">
+      <span className="eyebrow">Messages</span>
+      <div className="messageList withTop">
+        {messages.map((message) => (
+          <article className={message.read ? "" : "unread"} key={message.id}>
+            <div>
+              <strong>{message.subject}</strong>
+              <small>{message.from}</small>
+              <p>{message.body}</p>
+            </div>
+          </article>
+        ))}
+      </div>
     </section>
   );
 }
@@ -1094,44 +1120,26 @@ function SettingsView(props: {
   canManageSettings: boolean;
   institutionName: string;
   resetDemoData: () => void;
-  role: Role;
-  roleHelp: string;
   setInstitutionName: (value: string) => void;
 }) {
   return (
     <section className="contentGrid">
       <div className="mainColumn">
         <section className="panel">
-          <div className="panelHeader">
-            <div>
-              <span className="eyebrow">Institution</span>
-              <h2>School settings</h2>
-            </div>
-          </div>
-          <div className="formGrid compactGrid">
-            <label>
-              Institution name
-              <input
-                readOnly={!props.canManageSettings}
-                value={props.institutionName}
-                onChange={(event) => props.setInstitutionName(event.target.value)}
-              />
-            </label>
-            <label>
-              Active role
-              <input readOnly value={props.role} />
-            </label>
-          </div>
+          <span className="eyebrow">Institution</span>
+          <label className="withTop">
+            Institution name
+            <input
+              readOnly={!props.canManageSettings}
+              value={props.institutionName}
+              onChange={(event) => props.setInstitutionName(event.target.value)}
+            />
+          </label>
         </section>
       </div>
       <aside className="sideColumn single">
         <section className="panel compact">
-          <span className="eyebrow">Role Permissions</span>
-          <p className="muted withTop">{props.roleHelp}</p>
-        </section>
-        <section className="panel compact">
           <span className="eyebrow">Demo State</span>
-          <p className="muted withTop">Local changes are saved in this browser. Restore the seeded college data anytime.</p>
           <button className="secondaryButton wideButton" disabled={!props.canManageSettings} onClick={props.resetDemoData} type="button">
             <RotateCcw size={18} />
             Reset Demo Data
@@ -1142,244 +1150,49 @@ function SettingsView(props: {
   );
 }
 
-function CoursesPanel(props: {
-  addCourseToPlan: (course: Course) => void;
-  canAddCourseToPlan: boolean;
-  courses: CampusState["courses"];
-  selectedTerm: string;
+function CourseFields(props: {
+  course: typeof blankCourse;
+  setCourse: (course: typeof blankCourse) => void;
 }) {
   return (
-    <section className="panel">
-      <div className="panelHeader">
-        <div>
-          <span className="eyebrow">Course Catalog</span>
-          <h2>{props.selectedTerm} sections</h2>
-        </div>
-        <button className="iconButton" aria-label="Open calendar" type="button">
-          <CalendarDays size={18} />
-        </button>
-      </div>
-      <div className="courseTable" role="table" aria-label="Course catalog">
-        <div className="tableRow tableHead" role="row">
-          <span>Course</span>
-          <span>Instructor</span>
-          <span>Seats</span>
-          <span>Status</span>
-          <span>Action</span>
-        </div>
-        {props.courses.map((course) => (
-          <div className="tableRow" key={course.id} role="row">
-            <span>
-              <strong>{course.code}</strong>
-              <small>{course.title}</small>
-            </span>
-            <span>
-              <strong>{course.instructor}</strong>
-              <small>{course.department}</small>
-            </span>
-            <span>
-              <strong>
-                {course.enrolled}/{course.capacity}
-              </strong>
-              <small>
-                {course.schedule} - {course.room}
-              </small>
-            </span>
-            <span>
-              <mark className={course.status === "Open" ? "open" : course.status === "Closed" ? "closed" : "waitlist"}>
-                {course.status}
-              </mark>
-            </span>
-            <span>
-              <button
-                className="secondaryButton"
-                disabled={!props.canAddCourseToPlan}
-                onClick={() => props.addCourseToPlan(course)}
-                type="button"
-              >
-                Add
-              </button>
-            </span>
-          </div>
-        ))}
-      </div>
-    </section>
+    <div className="formGrid">
+      {(["code", "title", "department", "schedule", "room"] as const).map((field) => (
+        <label key={field}>
+          {field[0].toUpperCase() + field.slice(1)}
+          <input required value={props.course[field]} onChange={(event) => props.setCourse({ ...props.course, [field]: event.target.value })} />
+        </label>
+      ))}
+      <label>
+        Credits
+        <input type="number" value={props.course.credits} onChange={(event) => props.setCourse({ ...props.course, credits: Number(event.target.value) })} />
+      </label>
+      <label>
+        Capacity
+        <input type="number" value={props.course.capacity} onChange={(event) => props.setCourse({ ...props.course, capacity: Number(event.target.value) })} />
+      </label>
+    </div>
   );
 }
 
-function RegistrationPanel(props: {
-  approvePlan: () => void;
-  canApprovePlan: boolean;
-  canEnroll: boolean;
-  plan: CampusState["registrationPlan"];
-  toggleEnrollment: (planId: string) => void;
-  totalCredits: number;
-}) {
-  return (
-    <section className="panel innerPanel">
-      <div className="panelHeader">
-        <div>
-          <span className="eyebrow">Registration</span>
-          <h2>Student plan review</h2>
-        </div>
-        <button className="secondaryButton" disabled={!props.canApprovePlan} onClick={props.approvePlan} type="button">
-          Approve Plan
-        </button>
-      </div>
-      <div className="planGrid">
-        {props.plan.map((item) => (
-          <article className="planItem" key={item.id}>
-            <div>
-              <strong>{item.code}</strong>
-              <span>{item.title}</span>
-            </div>
-            <small>{item.credits} credits</small>
-            <mark className={item.enrolled ? "open" : item.ready ? "open" : "attention"}>
-              {item.enrolled ? "Enrolled" : item.ready ? "Ready" : "Needs advisor"}
-            </mark>
-            <button
-              className="secondaryButton"
-              disabled={!props.canEnroll}
-              onClick={() => props.toggleEnrollment(item.id)}
-              type="button"
-            >
-              {item.enrolled ? "Drop" : "Enroll"}
-            </button>
-          </article>
-        ))}
-      </div>
-      <p className="summaryLine">{props.totalCredits} enrolled credits in current plan</p>
-    </section>
-  );
+function peopleNames(people: Person[], ids: string[]) {
+  return ids.map((id) => personName(people, id)).filter(Boolean).join(", ");
 }
 
-function TeachingQueuePanel(props: {
-  canCompleteTask: boolean;
-  completeTask: (taskId: string) => void;
-  tasks: CampusState["teachingQueue"];
-}) {
-  return (
-    <section className="panel compact">
-      <span className="eyebrow">Teaching Queue</span>
-      <div className="taskList">
-        {props.tasks.map((task) => (
-          <article className={task.completed ? "done" : ""} key={task.id}>
-            <button
-              className="checkButton"
-              disabled={!props.canCompleteTask}
-              onClick={() => props.completeTask(task.id)}
-              type="button"
-              aria-label="Toggle task"
-            >
-              <CheckCircle2 size={17} />
-            </button>
-            <div>
-              <strong>{task.title}</strong>
-              <small>{task.course}</small>
-            </div>
-            <span>{task.completed ? "Done" : task.due}</span>
-          </article>
-        ))}
-      </div>
-    </section>
-  );
+function personName(people: Person[], id: string) {
+  return people.find((person) => person.id === id)?.name ?? "Unknown";
 }
 
-function GradebookPanel(props: {
-  gradebook: CampusState["gradebook"];
-  readonly?: boolean;
-  updateGrade?: (id: string, average: number) => void;
-}) {
-  return (
-    <section className="panel">
-      <div className="panelHeader">
-        <div>
-          <span className="eyebrow">Gradebook</span>
-          <h2>Assessment health</h2>
-        </div>
-      </div>
-      <div className="gradeBars">
-        {props.gradebook.map((item) => (
-          <article key={item.id}>
-            <div>
-              <strong>{item.course}</strong>
-              <span>
-                {item.average}% average - {item.missing} missing
-              </span>
-            </div>
-            <div className="barTrack">
-              <span style={{ width: `${item.average}%` }} />
-            </div>
-            {!props.readonly && props.updateGrade ? (
-              <label className="gradeInput">
-                Average
-                <input
-                  max="100"
-                  min="0"
-                  type="number"
-                  value={item.average}
-                  onChange={(event) => props.updateGrade?.(item.id, Number(event.target.value))}
-                />
-              </label>
-            ) : null}
-          </article>
-        ))}
-      </div>
-    </section>
-  );
+function courseName(courses: Course[], id: string) {
+  const course = courses.find((item) => item.id === id);
+  return course ? `${course.code} ${course.title}` : "Unknown course";
 }
 
-function ApprovalsPanel(props: {
-  approvals: CampusState["approvals"];
-  canResolveApprovals: boolean;
-  resolveApproval: (id: string) => void;
-}) {
-  return (
-    <section className="panel">
-      <div className="panelHeader">
-        <div>
-          <span className="eyebrow">Administration</span>
-          <h2>Approval queue</h2>
-        </div>
-      </div>
-      <div className="approvalList">
-        {props.approvals.map((item) => (
-          <article key={item.id}>
-            <div>
-              <strong>{item.title}</strong>
-              <small>{item.owner}</small>
-            </div>
-            <mark className={item.count === 0 ? "open" : "attention"}>{item.count}</mark>
-            <button
-              className="secondaryButton"
-              disabled={item.count === 0 || !props.canResolveApprovals}
-              onClick={() => props.resolveApproval(item.id)}
-              type="button"
-            >
-              Resolve
-            </button>
-          </article>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function AnnouncementsPanel(props: { announcements: CampusState["announcements"] }) {
-  return (
-    <section className="panel compact">
-      <span className="eyebrow">Announcements</span>
-      <div className="activityList withTop">
-        {props.announcements.map((item) => (
-          <article key={item.id}>
-            <strong>{item.title}</strong>
-            <small>
-              {item.course} - {item.publishedAt}
-            </small>
-            <p>{item.body}</p>
-          </article>
-        ))}
-      </div>
-    </section>
-  );
+function roleWorkflow(role: UserRole) {
+  const workflows: Record<UserRole, string> = {
+    Administrator: "Create and modify courses, then assign faculty and students to the course roster.",
+    Advisor: "Review student course registration requests and approve or reject enrollment.",
+    Faculty: "Create weekly folders, publish lectures, add assignments, review submissions, and enter grades.",
+    Student: "Request enrollment, enter approved courses, read lectures, submit assignments, and view grades."
+  };
+  return workflows[role];
 }

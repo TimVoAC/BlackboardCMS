@@ -40,6 +40,35 @@ npm run dev
 
 Open http://localhost:3000.
 
+## Run With Docker
+
+Build and start the full stack:
+
+```bash
+docker compose up --build
+```
+
+This starts:
+
+- `campusboard-web`: the production Next.js web server on port `3000`
+- `campusboard-postgres`: PostgreSQL 16 on port `5432`
+- Prisma migrations on app startup
+- Optional seed data when `SEED_DATABASE=true`
+
+Open http://localhost:3000.
+
+Stop the stack:
+
+```bash
+docker compose down
+```
+
+Remove the database volume and start fresh:
+
+```bash
+docker compose down -v
+```
+
 ## Included Modules
 
 - Institution dashboard

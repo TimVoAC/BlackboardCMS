@@ -1,4 +1,22 @@
 services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: campusboard:latest
+    container_name: campusboard-web
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://campusboard:campusboard@postgres:5432/campusboard?schema=public
+      SEED_DATABASE: "true"
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: "1"
+    ports:
+      - "3000:3000"
+
   postgres:
     image: postgres:16-alpine
     container_name: campusboard-postgres
@@ -11,6 +29,11 @@ services:
       - "5432:5432"
     volumes:
       - campusboard_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U campusboard -d campusboard"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
 volumes:
   campusboard_pgdata:
